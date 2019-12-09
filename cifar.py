@@ -26,6 +26,7 @@ from sklearn.decomposition import PCA
 
 from utils import AverageMeter, accuracy, mkdir_p, cifar_loader
 import utils.log
+import utils.visualize as vis
 
 
 model_names = sorted(name for name in models.__dict__
@@ -241,20 +242,22 @@ def main():
 
 
     if args.evaluate:
-        print('\nEvaluation only')
-        test_loss, test_acc, auroc = test(testloader, model, criterion, 
-                                          start_epoch, use_cuda)
-        print(' Test Loss: %.8f, Test Acc: %.2f%%, AUROC: %.4f' % \
-                    (test_loss, test_acc, auroc))
+        #print('\nEvaluation only')
+        #test_loss, test_acc, auroc = test(testloader, model, criterion, 
+        #                                  start_epoch, use_cuda)
+        #print(' Test Loss: %.8f, Test Acc: %.2f%%, AUROC: %.4f' % \
+        #            (test_loss, test_acc, auroc))
 
+        #train_pca = calc_pca(trainloader, model, use_cuda)
+        #_, _, _ = test(testloader, model, criterion, 
+        #               start_epoch, use_cuda, train_pca)
 
-        
-        train_pca = calc_pca(trainloader, model, use_cuda)
-        print(train_pca.components_.shape) # (5, 64)
-        print(type(train_pca.components_))
+        print('\nEvaluation with Adversarial Attack')
+        adv_top1, top1= advattack(trainloader,model, criterion[:1], 
+                                  start_epoch, use_cuda)
+        print(' Adv Top1 Acc: %.2f%%, Top1 Acc: %.2f%%' % \
+                    (adv_top1, top1))
 
-        _, _, _ = test(testloader, model, criterion, 
-                       start_epoch, use_cuda, train_pca)
         return
 
 
@@ -336,6 +339,69 @@ def train(trainloader, model, criterion, optimizer, epoch, use_cuda):
 
     return (losses.avg, top1.avg)
 
+def advattack(dataloader, model, criterion, epoch, use_cuda, pca=None):
+    softmax = nn.Softmax(dim=1)
+    top1 = AverageMeter()
+    advtop1 = AverageMeter()
+    # switch to evaluate mode
+    model.eval()
+
+    end = time.time()
+    for batch_idx, (inputs, targets) in enumerate(dataloader):
+        if use_cuda:
+            inputs, targets = inputs.cuda(), targets.cuda()
+        #inputs  = torch.autograd.Variable(inputs, volatile=True)
+        init_inputs = inputs
+        inputs  = torch.autograd.Variable(inputs, requires_grad=True)
+        targets = torch.autograd.Variable(targets)
+
+        # compute output
+        outputs, feats = model(inputs)
+        init_pred = outputs.max(1, keepdim=True)[1]
+
+        num_class = outputs.shape[1]
+        #new_target = targets + torch.randint(1, num_class)
+        new_target = targets + 1
+        new_target = torch.remainder(new_target, num_class)
+
+        # Attack loop
+        for i in range(10):
+            inputs.grad = None
+            adv_out, _ = model(inputs)
+            loss = criterion[0](adv_out, new_target)
+            loss.backward()
+            data_grad = 0.01*torch.sign(inputs.grad.data)
+            inputs.data = inputs.data - data_grad
+
+
+        prec1 = accuracy(outputs.data, targets.data, topk=(1, ))
+        advprec1 = accuracy(adv_out.data, targets.data, topk=(1, ))
+        top1.update(prec1[0], inputs.size(0))
+        advtop1.update(advprec1[0], inputs.size(0))
+        
+        if batch_idx == 10:
+            idx=10
+            img = inputs[idx].cpu().data.cpu().numpy()
+            init_img = init_inputs[idx].cpu().numpy()
+            vis._save_image(img, 'perturbed.jpg')
+            vis._save_image(init_img, 'init.jpg')
+            break
+
+    if pca is not None:
+        W = model.state_dict()['module.fc.weight'].cpu().numpy()
+        fit_feature = pca.transform(feature)
+        fit_W = pca.transform(W)
+        pca_output = np.matmul(fit_feature, np.transpose(fit_W))
+        pred = np.argmax(pca_output, axis=1)
+        pca_acc = np.sum(pred==label)/100 * num_test / num_inlier
+        print('PCA accuracy : %.2f'%pca_acc)
+
+    return (advtop1.avg, top1.avg)
+
+
+
+
+
 
 def test(testloader, model, criterion, epoch, use_cuda, pca=None):
     # Evaluates closed set accuracy,
@@ -374,6 +440,7 @@ def test(testloader, model, criterion, epoch, use_cuda, pca=None):
         list_targets.append(targets.cpu().data.numpy())
         list_feats.append(feats[0].cpu().data.numpy())
         #list_feats.append(softmax(outputs).cpu().data.numpy())
+
         # measure accuracy and record loss
         prec1, prec5 = accuracy(outputs.data, targets.data, topk=(1, 5))
         losses.update(loss.data[0], inputs.size(0))
@@ -383,7 +450,7 @@ def test(testloader, model, criterion, epoch, use_cuda, pca=None):
         # measure elapsed time
         batch_time.update(time.time() - end)
         end = time.time()
-
+        
     feature = np.vstack(list_feats)
     label   = np.concatenate(list_targets)
 
