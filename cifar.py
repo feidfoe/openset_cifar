@@ -22,6 +22,7 @@ import models
 
 import numpy as np
 from sklearn.metrics import roc_curve, auc
+from sklearn.decomposition import PCA
 
 from utils import AverageMeter, accuracy, mkdir_p, cifar_loader
 import utils.log
@@ -245,6 +246,15 @@ def main():
                                           start_epoch, use_cuda)
         print(' Test Loss: %.8f, Test Acc: %.2f%%, AUROC: %.4f' % \
                     (test_loss, test_acc, auroc))
+
+
+        
+        train_pca = calc_pca(trainloader, model, use_cuda)
+        print(train_pca.components_.shape) # (5, 64)
+        print(type(train_pca.components_))
+
+        _, _, _ = test(testloader, model, criterion, 
+                       start_epoch, use_cuda, train_pca)
         return
 
 
@@ -326,7 +336,8 @@ def train(trainloader, model, criterion, optimizer, epoch, use_cuda):
 
     return (losses.avg, top1.avg)
 
-def test(testloader, model, criterion, epoch, use_cuda):
+
+def test(testloader, model, criterion, epoch, use_cuda, pca=None):
     # Evaluates closed set accuracy,
     #           opened set accuracy,
     #           openset AUROC
@@ -361,8 +372,8 @@ def test(testloader, model, criterion, epoch, use_cuda):
         loss = criterion[0](outputs, targets)
 
         list_targets.append(targets.cpu().data.numpy())
-        #list_feats.append(feats[0].cpu().data.numpy())
-        list_feats.append(softmax(outputs).cpu().data.numpy())
+        list_feats.append(feats[0].cpu().data.numpy())
+        #list_feats.append(softmax(outputs).cpu().data.numpy())
         # measure accuracy and record loss
         prec1, prec5 = accuracy(outputs.data, targets.data, topk=(1, 5))
         losses.update(loss.data[0], inputs.size(0))
@@ -384,12 +395,43 @@ def test(testloader, model, criterion, epoch, use_cuda):
     num_inlier  = num_test - num_outlier
     top1_acc = top1.avg * num_test / num_inlier
     
-
     fpr, tpr, ths = roc_curve(ind_outlier, in_score, pos_label=0)
 
+    if pca is not None:
+        W = model.state_dict()['module.fc.weight'].cpu().numpy()
+        fit_feature = pca.transform(feature)
+        fit_W = pca.transform(W)
+        pca_output = np.matmul(fit_feature, np.transpose(fit_W))
+        pred = np.argmax(pca_output, axis=1)
+        pca_acc = np.sum(pred==label)/100 * num_test / num_inlier
+        print('PCA accuracy : %.2f'%pca_acc)
 
-    #return (losses.avg, top1.avg)
     return (losses.avg, top1_acc, auc(fpr, tpr))
+
+
+def calc_pca(dataloader, model, use_cuda):
+    # switch to evaluate mode
+    model.eval()
+    list_feats   = []
+    for batch_idx, (inputs, _) in enumerate(dataloader):
+
+        if use_cuda:
+            inputs= inputs.cuda()
+        inputs  = torch.autograd.Variable(inputs, volatile=True)
+
+        # compute output
+        outputs, feats = model(inputs)
+        list_feats.append(feats[0].cpu().data.numpy())
+    feature = np.vstack(list_feats)
+
+    # PCA
+    pca = PCA(n_components=5)
+    pca.fit(feature)
+
+    return pca
+
+
+
 
 def save_checkpoint(state, is_best, checkpoint='checkpoint', 
                     filename='checkpoint.pth.tar'):
