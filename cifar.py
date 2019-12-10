@@ -250,7 +250,7 @@ def main():
 
 
         n_components = 5
-        train_pca = calc_pca(testloader, model, use_cuda, n_components)
+        train_pca = calc_pca(trainloader, model, use_cuda, n_components)
         _, _, auroc = test(testloader, model, criterion, 
                            start_epoch, use_cuda, train_pca)
         print('AUROC: %.4f' % (auroc))
