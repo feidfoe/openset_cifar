@@ -340,11 +340,14 @@ def train(trainloader, model, criterion, optimizer, epoch, use_cuda):
     return (losses.avg, top1.avg)
 
 def advattack(dataloader, model, criterion, epoch, use_cuda, pca=None):
+    classes = ['airplane', 'automobile', 'bird',  'cat',  'deer',
+               'dog',      'frog',       'horse', 'ship', 'truck']
     softmax = nn.Softmax(dim=1)
     top1 = AverageMeter()
     advtop1 = AverageMeter()
     # switch to evaluate mode
     model.eval()
+    #model.requires_grad=True
 
     end = time.time()
     for batch_idx, (inputs, targets) in enumerate(dataloader):
@@ -356,16 +359,24 @@ def advattack(dataloader, model, criterion, epoch, use_cuda, pca=None):
         targets = torch.autograd.Variable(targets)
 
         # compute output
+        model.zero_grad()
         outputs, feats = model(inputs)
-        init_pred = outputs.max(1, keepdim=True)[1]
+        loss = criterion[0](outputs, targets)
+        loss.backward()
 
+        maps  = [ model.module.list_actmap[i] \
+                    for i in range(len(model.module.list_actmap)) ]
+        grads = [ model.module.list_grad[-i-1] \
+                    for i in range(len(model.module.list_grad)) ]
+
+        init_pred = outputs.max(1, keepdim=True)[1]
         num_class = outputs.shape[1]
         #new_target = targets + torch.randint(1, num_class)
         new_target = targets + 1
         new_target = torch.remainder(new_target, num_class)
 
         # Attack loop
-        for i in range(10):
+        for i in range(20):
             inputs.grad = None
             adv_out, _ = model(inputs)
             loss = criterion[0](adv_out, new_target)
@@ -373,18 +384,38 @@ def advattack(dataloader, model, criterion, epoch, use_cuda, pca=None):
             data_grad = 0.01*torch.sign(inputs.grad.data)
             inputs.data = inputs.data - data_grad
 
-
+            adv_maps  = [ model.module.list_actmap[i] \
+                        for i in range(len(model.module.list_actmap)) ]
+            adv_grads = [ model.module.list_grad[-i-1] \
+                        for i in range(len(model.module.list_grad)) ]
+            
         prec1 = accuracy(outputs.data, targets.data, topk=(1, ))
         advprec1 = accuracy(adv_out.data, targets.data, topk=(1, ))
         top1.update(prec1[0], inputs.size(0))
         advtop1.update(advprec1[0], inputs.size(0))
         
-        if batch_idx == 10:
+        if batch_idx == 1:
             idx=10
             img = inputs[idx].cpu().data.cpu().numpy()
             init_img = init_inputs[idx].cpu().numpy()
-            vis._save_image(img, 'perturbed.jpg')
-            vis._save_image(init_img, 'init.jpg')
+            recon = feats[-1][idx].data.cpu().numpy()
+            img_pert = vis._save_image(img)
+            img_init = vis._save_image(init_img)
+            vis._save_image(recon)
+            #gradCAM_old(maps, grads, 'gradCAM.jpg', idx)
+            #gradCAM_old(adv_maps, adv_grads, 'gradCAM_adv.jpg', idx)
+
+            cam_init = gradCAM(torch.autograd.Variable(init_inputs, 
+                                                   requires_grad=True), 
+                               targets, model, idx)
+            cam_pert = gradCAM(inputs, 
+                               new_target, model, idx)
+            label_init = classes[targets.data.cpu().numpy()[idx]]
+            label_pert = classes[new_target.data.cpu().numpy()[idx]]
+
+            vis._save_2x2([img_init, cam_init, img_pert, cam_pert],
+                          'gradCAM_%s_%s.jpg'%(label_init, label_pert))
+
             break
 
     if pca is not None:
@@ -397,10 +428,6 @@ def advattack(dataloader, model, criterion, epoch, use_cuda, pca=None):
         print('PCA accuracy : %.2f'%pca_acc)
 
     return (advtop1.avg, top1.avg)
-
-
-
-
 
 
 def test(testloader, model, criterion, epoch, use_cuda, pca=None):
@@ -498,6 +525,37 @@ def calc_pca(dataloader, model, use_cuda):
     return pca
 
 
+def gradCAM(data_batch, target, model, filename, idx=0):
+    data  = data_batch[idx:idx+1]
+    label = target[idx]
+    outputs, feats = model(data_batch)
+    #pred = torch.max(outputs, dim=1)[0]
+    #loss = torch.sum(pred)
+    loss = torch.sum(outputs[:,label])
+    loss.backward()
+
+    maps  = [ model.module.list_actmap[i] \
+                for i in range(len(model.module.list_actmap)) ]
+    grads = [ model.module.list_grad[-i-1] \
+                for i in range(len(model.module.list_grad)) ]
+
+    out = []
+    for f,g in zip(maps, grads):
+        alpha = torch.mean(g,     dim=2, keepdim=True)
+        alpha = torch.mean(alpha, dim=3, keepdim=True)
+        local_CAM = torch.sum(alpha * f, dim=1)[idx].cpu().numpy()
+        out.append(local_CAM)
+    return vis._save_gradCAM(out)
+
+
+def gradCAM_old(feats, grads, filename, idx=0):
+    out = []
+    for f,g in zip(feats, grads):
+        alpha = torch.mean(g,     dim=2, keepdim=True)
+        alpha = torch.mean(alpha, dim=3, keepdim=True)
+        local_CAM = torch.sum(alpha * f, dim=1)[idx].cpu().numpy()
+        out.append(local_CAM)
+    vis._save_gradCAM(out, filename)
 
 
 def save_checkpoint(state, is_best, checkpoint='checkpoint', 

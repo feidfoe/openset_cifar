@@ -113,6 +113,7 @@ class ResNet(nn.Module):
         self.conv1 = nn.Conv2d(3, 16, kernel_size=3, padding=1,
                                bias=False)
         self.bn1 = nn.BatchNorm2d(16)
+        self.init_relu = nn.ReLU(inplace=True)
         self.relu = nn.ReLU(inplace=True)
         self.layer1 = self._make_layer(block, 16, n)
         self.layer2 = self._make_layer(block, 32, n, stride=2)
@@ -121,6 +122,8 @@ class ResNet(nn.Module):
         self.fc = nn.Linear(64 * block.expansion, num_classes)
 
 
+        self.list_actmap = []
+        self.list_grad = []
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
@@ -128,6 +131,25 @@ class ResNet(nn.Module):
             elif isinstance(m, nn.BatchNorm2d):
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
+
+        self.init_relu.register_forward_hook(self._func_forward_)
+        self.layer1.register_forward_hook(self._func_forward_)
+        #self.layer2.register_forward_hook(self._func_forward_)
+        #self.layer3.register_forward_hook(self._func_forward_)
+
+        self.init_relu.register_backward_hook(self._func_backward_)
+        self.layer1.register_backward_hook(self._func_backward_)
+        #self.layer2.register_backward_hook(self._func_backward_)
+        #self.layer3.register_backward_hook(self._func_backward_)
+
+
+
+
+
+    def _func_forward_(self, module, input, output):
+        self.list_actmap.append(output.data)
+    def _func_backward_(self, module, grad_input, grad_output):
+        self.list_grad.append(grad_output[0].data)
 
     def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None
@@ -147,9 +169,11 @@ class ResNet(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
+        self.list_actmap = []
+        self.list_grad = []
         x = self.conv1(x)
         x = self.bn1(x)
-        x = self.relu(x)    # 32x32
+        x = self.init_relu(x)    # 32x32
 
         x = self.layer1(x)  # 32x32
         x = self.layer2(x)  # 16x16

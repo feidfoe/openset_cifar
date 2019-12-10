@@ -1,2 +1,4 @@
-utils/__pycache__/
+utils/__pycache__/*
 *.jpg
+*.swp
+*/*.swp

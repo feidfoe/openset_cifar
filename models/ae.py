@@ -106,6 +106,7 @@ class AE(nn.Module):
         self.conv1 = nn.Conv2d(3, 16, kernel_size=3, padding=1,
                                bias=False)
         self.bn1 = nn.BatchNorm2d(16)
+        self.init_relu = nn.ReLU(inplace=True)
         self.relu = nn.ReLU(inplace=True)
         self.layer1 = self._make_layer(block, 16, n)
         self.layer2 = self._make_layer(block, 32, n, stride=2)
@@ -155,6 +156,8 @@ class AE(nn.Module):
                                     bias=False,
                                     padding=1)
 
+        self.list_actmap = []
+        self.list_grad = []
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
@@ -162,6 +165,23 @@ class AE(nn.Module):
             elif isinstance(m, nn.BatchNorm2d):
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
+        
+        #self.init_relu.register_forward_hook(self._func_forward_)
+        #self.layer1.register_forward_hook(self._func_forward_)
+        #self.layer2.register_forward_hook(self._func_forward_)
+        self.layer3.register_forward_hook(self._func_forward_)
+
+        #self.init_relu.register_backward_hook(self._func_backward_)
+        #self.layer1.register_backward_hook(self._func_backward_)
+        #self.layer2.register_backward_hook(self._func_backward_)
+        self.layer3.register_backward_hook(self._func_backward_)
+
+
+    def _func_forward_(self, module, input, output):
+        self.list_actmap.append(output.data)
+    def _func_backward_(self, module, grad_input, grad_output):
+        self.list_grad.append(grad_output[0].data)
+            
 
     def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None
@@ -181,10 +201,12 @@ class AE(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
+        self.list_actmap = []
+        self.list_grad = []
         # Encoding path
         x = self.conv1(x)
         x = self.bn1(x)
-        x = self.relu(x)    # 32x32
+        x = self.init_relu(x)    # 32x32
 
         f1 = self.layer1(x)  # 32x32
         f2 = self.layer2(f1)  # 16x16
@@ -206,7 +228,8 @@ class AE(nn.Module):
         feat = x
         x = self.fc(x)
 
-        return x, [feat, dx]
+        # Feature list : the last element should be recon image
+        return x, [f1, f2, f3, dx]
 
 
 def ae(**kwargs):

@@ -4,6 +4,7 @@ dataset_path=~/bj/dataset/
 checkpoint_path=~/bj/checkpoint/openset
 
 dataset=cifar10
+arch=resnet
 arch=ae
 depth=32
 
