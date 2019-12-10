@@ -242,18 +242,22 @@ def main():
 
 
     if args.evaluate:
-        #print('\nEvaluation only')
-        #test_loss, test_acc, auroc = test(testloader, model, criterion, 
-        #                                  start_epoch, use_cuda)
-        #print(' Test Loss: %.8f, Test Acc: %.2f%%, AUROC: %.4f' % \
-        #            (test_loss, test_acc, auroc))
+        print('\nEvaluation only')
+        test_loss, test_acc, auroc = test(testloader, model, criterion, 
+                                          start_epoch, use_cuda)
+        print(' Test Loss: %.8f, Test Acc: %.2f%%' % \
+                    (test_loss, test_acc))
 
-        #train_pca = calc_pca(trainloader, model, use_cuda)
-        #_, _, _ = test(testloader, model, criterion, 
-        #               start_epoch, use_cuda, train_pca)
+
+        n_components = 5
+        train_pca = calc_pca(testloader, model, use_cuda, n_components)
+        _, _, auroc = test(testloader, model, criterion, 
+                           start_epoch, use_cuda, train_pca)
+        print('AUROC: %.4f' % (auroc))
+        return
 
         print('\nEvaluation with Adversarial Attack')
-        adv_top1, top1= advattack(trainloader,model, criterion[:1], 
+        adv_top1, top1= advattack(trainloader,model, criterion[:1],
                                   start_epoch, use_cuda)
         print(' Adv Top1 Acc: %.2f%%, Top1 Acc: %.2f%%' % \
                     (adv_top1, top1))
@@ -401,9 +405,7 @@ def advattack(dataloader, model, criterion, epoch, use_cuda, pca=None):
             recon = feats[-1][idx].data.cpu().numpy()
             img_pert = vis._save_image(img)
             img_init = vis._save_image(init_img)
-            vis._save_image(recon)
-            #gradCAM_old(maps, grads, 'gradCAM.jpg', idx)
-            #gradCAM_old(adv_maps, adv_grads, 'gradCAM_adv.jpg', idx)
+            #vis._save_image(recon)
 
             cam_init = gradCAM(torch.autograd.Variable(init_inputs, 
                                                    requires_grad=True), 
@@ -449,6 +451,7 @@ def test(testloader, model, criterion, epoch, use_cuda, pca=None):
 
     list_targets = []
     list_feats   = []
+    list_softmax = []
 
     end = time.time()
     for batch_idx, (inputs, targets) in enumerate(testloader):
@@ -466,7 +469,7 @@ def test(testloader, model, criterion, epoch, use_cuda, pca=None):
 
         list_targets.append(targets.cpu().data.numpy())
         list_feats.append(feats[0].cpu().data.numpy())
-        #list_feats.append(softmax(outputs).cpu().data.numpy())
+        list_softmax.append(softmax(outputs).cpu().data.numpy())
 
         # measure accuracy and record loss
         prec1, prec5 = accuracy(outputs.data, targets.data, topk=(1, 5))
@@ -478,32 +481,40 @@ def test(testloader, model, criterion, epoch, use_cuda, pca=None):
         batch_time.update(time.time() - end)
         end = time.time()
         
-    feature = np.vstack(list_feats)
-    label   = np.concatenate(list_targets)
 
-    in_score = np.amax(feature, axis=1)
+    feature = np.vstack(list_feats)
+    pred    = np.vstack(list_softmax)
+    label   = np.concatenate(list_targets)
 
     num_test = label.shape[0]
     ind_outlier = label==-100
     num_outlier = np.sum(ind_outlier)
     num_inlier  = num_test - num_outlier
     top1_acc = top1.avg * num_test / num_inlier
-    
-    fpr, tpr, ths = roc_curve(ind_outlier, in_score, pos_label=0)
 
-    if pca is not None:
-        W = model.state_dict()['module.fc.weight'].cpu().numpy()
+    if pca is None:
+        in_score = np.amax(pred, axis=1)
+        fpr, tpr, ths = roc_curve(ind_outlier, in_score, pos_label=0)
+        print('AUROC for softmax thres : %.4f'%auc(fpr, tpr))
+    else:
+        W = model.state_dict()['module.fc.weight'].cpu().numpy() #10x64
         fit_feature = pca.transform(feature)
-        fit_W = pca.transform(W)
-        pca_output = np.matmul(fit_feature, np.transpose(fit_W))
-        pred = np.argmax(pca_output, axis=1)
-        pca_acc = np.sum(pred==label)/100 * num_test / num_inlier
-        print('PCA accuracy : %.2f'%pca_acc)
+        #fit_W = pca.transform(W)
+        #pca_output = np.matmul(fit_feature, np.transpose(fit_W))
+        #pred = np.argmax(pca_output, axis=1)
+        #pca_acc = np.sum(pred==label)/100 * num_test / num_inlier
+        #print('PCA accuracy : %.2f'%pca_acc)
+
+        pca_feat = np.matmul(fit_feature, pca.components_)
+        in_score = 1. / np.linalg.norm(feature - pca_feat, axis=1) 
+        in_score = in_score * np.linalg.norm(pca_feat, axis=1) 
+        #in_score = np.linalg.norm(fit_feature, axis=1)
+        fpr, tpr, ths = roc_curve(ind_outlier, in_score, pos_label=0)
 
     return (losses.avg, top1_acc, auc(fpr, tpr))
 
 
-def calc_pca(dataloader, model, use_cuda):
+def calc_pca(dataloader, model, use_cuda, n_components=5):
     # switch to evaluate mode
     model.eval()
     list_feats   = []
@@ -519,7 +530,7 @@ def calc_pca(dataloader, model, use_cuda):
     feature = np.vstack(list_feats)
 
     # PCA
-    pca = PCA(n_components=5)
+    pca = PCA(n_components=n_components)
     pca.fit(feature)
 
     return pca

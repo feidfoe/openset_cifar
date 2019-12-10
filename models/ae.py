@@ -225,11 +225,12 @@ class AE(nn.Module):
         # Classification layers
         x = self.avgpool(f3)
         x = x.view(x.size(0), -1)
-        feat = x
+        #feat = x
+        feat = f3.view(x.size(0), -1)
         x = self.fc(x)
 
         # Feature list : the last element should be recon image
-        return x, [f1, f2, f3, dx]
+        return x, [feat, f1, f2, f3, dx]
 
 
 def ae(**kwargs):
