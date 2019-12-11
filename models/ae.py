@@ -112,7 +112,9 @@ class AE(nn.Module):
         self.layer2 = self._make_layer(block, 32, n, stride=2)
         self.layer3 = self._make_layer(block, 64, n, stride=2)
         self.avgpool = nn.AvgPool2d(8)
-        self.fc = nn.Linear(64 * block.expansion, num_classes)
+        self.fc = nn.Linear(64 * block.expansion, 
+                            num_classes,
+                            bias=False)
 
         self.ae_conv1   = nn.Conv2d(64*block.expansion, 64,
                                   kernel_size=3,
@@ -225,8 +227,8 @@ class AE(nn.Module):
         # Classification layers
         x = self.avgpool(f3)
         x = x.view(x.size(0), -1)
-        #feat = x
-        feat = f3.view(x.size(0), -1)
+        feat = x
+        #feat = f3.view(x.size(0), -1)
         x = self.fc(x)
 
         # Feature list : the last element should be recon image

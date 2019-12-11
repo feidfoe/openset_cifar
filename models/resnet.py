@@ -119,7 +119,11 @@ class ResNet(nn.Module):
         self.layer2 = self._make_layer(block, 32, n, stride=2)
         self.layer3 = self._make_layer(block, 64, n, stride=2)
         self.avgpool = nn.AvgPool2d(8)
-        self.fc = nn.Linear(64 * block.expansion, num_classes)
+        self.bn1d   = nn.BatchNorm1d(64 * block.expansion,
+                                     affine=False)
+        self.fc = nn.Linear(64 * block.expansion, 
+                            num_classes, 
+                            bias=False)
 
 
         self.list_actmap = []
@@ -181,6 +185,7 @@ class ResNet(nn.Module):
 
         x = self.avgpool(x)
         x = x.view(x.size(0), -1)
+        x = self.bn1d(x)
         feat = x
         x = self.fc(x)
 

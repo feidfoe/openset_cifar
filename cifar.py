@@ -147,7 +147,7 @@ def main():
                              (0.2023, 0.1994, 0.2010)),
     ])
     if args.dataset == 'cifar10':
-        num_classes = 10
+        num_classes = 6
     else:
         num_classes = 100
 
@@ -250,15 +250,19 @@ def main():
 
 
         n_components = 5
-        train_pca = calc_pca(trainloader, model, use_cuda, n_components)
+        # if n_components is not passes, compute full rank
+        train_pca = calc_pca(trainloader, model, use_cuda)
+        #train_pca = calc_pca(trainloader, model, use_cuda, n_components)
         _, _, auroc = test(testloader, model, criterion, 
                            start_epoch, use_cuda, train_pca)
         print('AUROC: %.4f' % (auroc))
         return
 
+        print(train_pca.singular_values_)
         print('\nEvaluation with Adversarial Attack')
         adv_top1, top1= advattack(trainloader,model, criterion[:1],
-                                  start_epoch, use_cuda)
+                                  start_epoch, use_cuda, 
+                                  train_pca, n_components)
         print(' Adv Top1 Acc: %.2f%%, Top1 Acc: %.2f%%' % \
                     (adv_top1, top1))
 
@@ -343,7 +347,8 @@ def train(trainloader, model, criterion, optimizer, epoch, use_cuda):
 
     return (losses.avg, top1.avg)
 
-def advattack(dataloader, model, criterion, epoch, use_cuda, pca=None):
+def advattack(dataloader, model, criterion, epoch, use_cuda, 
+              pca=None, n_components=5):
     classes = ['airplane', 'automobile', 'bird',  'cat',  'deer',
                'dog',      'frog',       'horse', 'ship', 'truck']
     softmax = nn.Softmax(dim=1)
@@ -365,6 +370,7 @@ def advattack(dataloader, model, criterion, epoch, use_cuda, pca=None):
         # compute output
         model.zero_grad()
         outputs, feats = model(inputs)
+        feature = feats[0]
         loss = criterion[0](outputs, targets)
         loss.backward()
 
@@ -382,7 +388,8 @@ def advattack(dataloader, model, criterion, epoch, use_cuda, pca=None):
         # Attack loop
         for i in range(20):
             inputs.grad = None
-            adv_out, _ = model(inputs)
+            adv_out, feat = model(inputs)
+            adv_feature = feat[0]
             loss = criterion[0](adv_out, new_target)
             loss.backward()
             data_grad = 0.01*torch.sign(inputs.grad.data)
@@ -421,13 +428,21 @@ def advattack(dataloader, model, criterion, epoch, use_cuda, pca=None):
             break
 
     if pca is not None:
-        W = model.state_dict()['module.fc.weight'].cpu().numpy()
-        fit_feature = pca.transform(feature)
-        fit_W = pca.transform(W)
-        pca_output = np.matmul(fit_feature, np.transpose(fit_W))
-        pred = np.argmax(pca_output, axis=1)
-        pca_acc = np.sum(pred==label)/100 * num_test / num_inlier
-        print('PCA accuracy : %.2f'%pca_acc)
+        W = model.state_dict()['module.fc.weight'].cpu().numpy() #10x64
+        print(np.matmul(W, np.transpose(W)))
+        fit_W = pca.transform(W + pca.mean_)
+        for f in [feature, adv_feature]:
+            f = f.data.cpu().numpy()
+            fit_feature = pca.transform(f)
+
+            PCs  = fit_feature[:,:n_components]
+            nPCs = fit_feature[:,n_components:]
+
+            norm_PCs  = np.linalg.norm(PCs,  ord=2, axis=1)
+            norm_nPCs = np.linalg.norm(nPCs, ord=2, axis=1)
+            print(norm_PCs[:5] / norm_nPCs[:5])
+            print(np.mean(norm_PCs), np.mean(norm_nPCs))
+
 
     return (advtop1.avg, top1.avg)
 
@@ -505,31 +520,31 @@ def test(testloader, model, criterion, epoch, use_cuda, pca=None):
         #pca_acc = np.sum(pred==label)/100 * num_test / num_inlier
         #print('PCA accuracy : %.2f'%pca_acc)
 
-        pca_feat = np.matmul(fit_feature, pca.components_)
-        in_score = 1. / np.linalg.norm(feature - pca_feat, axis=1) 
-        in_score = in_score * np.linalg.norm(pca_feat, axis=1) 
-        #in_score = np.linalg.norm(fit_feature, axis=1)
+        #pca_feat = np.matmul(fit_feature, pca.components_) + pca.mean_
+        #in_score = 1. / np.linalg.norm(feature - pca_feat, axis=1) 
+        #in_score = in_score * np.linalg.norm(pca_feat, axis=1) 
+        in_score = np.linalg.norm(fit_feature[:,-5:], axis=1)
         fpr, tpr, ths = roc_curve(ind_outlier, in_score, pos_label=0)
 
     return (losses.avg, top1_acc, auc(fpr, tpr))
 
 
-def calc_pca(dataloader, model, use_cuda, n_components=5):
+def calc_pca(dataloader, model, use_cuda, n_components=None):
     # switch to evaluate mode
     model.eval()
     list_feats   = []
     for batch_idx, (inputs, _) in enumerate(dataloader):
-
         if use_cuda:
             inputs= inputs.cuda()
         inputs  = torch.autograd.Variable(inputs, volatile=True)
-
         # compute output
         outputs, feats = model(inputs)
         list_feats.append(feats[0].cpu().data.numpy())
     feature = np.vstack(list_feats)
 
     # PCA
+    if n_components is None:
+        n_components = feature.shape[1]
     pca = PCA(n_components=n_components)
     pca.fit(feature)
 

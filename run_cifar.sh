@@ -5,11 +5,11 @@ checkpoint_path=~/bj/checkpoint/openset
 
 dataset=cifar10
 arch=resnet
-arch=ae
+#arch=ae
 depth=32
 
-TRAIN=false
-EVAL=true
+TRAIN=true
+EVAL=false
 
 
 INLIERS=543210

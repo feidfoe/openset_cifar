@@ -73,6 +73,8 @@ class CIFARLoader(Dataset):
         if label not in self.inlist:
             # default ignore index of cross entropy in PyTorch
             label = label*0-100
+        else:
+            label = label*0 + self.inlist.index(label)
         return self.T(image), label.astype(np.long)
 
     def __len__(self):
