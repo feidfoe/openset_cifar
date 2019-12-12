@@ -136,6 +136,8 @@ class ResNet(nn.Module):
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
 
+
+        # Register hooks
         self.init_relu.register_forward_hook(self._func_forward_)
         self.layer1.register_forward_hook(self._func_forward_)
         #self.layer2.register_forward_hook(self._func_forward_)
@@ -146,9 +148,15 @@ class ResNet(nn.Module):
         #self.layer2.register_backward_hook(self._func_backward_)
         #self.layer3.register_backward_hook(self._func_backward_)
 
+        self.fc.register_backward_hook(self.__WVN__)
 
 
 
+    def __WVN__(self, module, grad_input, grad_output):
+        W = module.weight.data
+        W_norm = W / torch.norm(W, p=2, dim=1, keepdim=True)
+
+        module.weight.data.copy_(W_norm)
 
     def _func_forward_(self, module, input, output):
         self.list_actmap.append(output.data)

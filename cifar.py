@@ -303,6 +303,7 @@ def main():
 def train(trainloader, model, criterion, optimizer, epoch, use_cuda):
     # switch to train mode
     model.train()
+    mseloss = nn.MSELoss()
 
     batch_time = AverageMeter()
     data_time = AverageMeter()
@@ -329,6 +330,16 @@ def train(trainloader, model, criterion, optimizer, epoch, use_cuda):
         loss = criterion[0](outputs, targets)
         if len(criterion)==2:
             loss = loss + criterion[1](feats[-1], inputs)
+
+        # Orthogonal loss
+        W = model.module.fc.weight
+        WWT = torch.matmul(W, W.t())
+        #loss_orth = torch.norm(WWT -  torch.eye(outputs.shape[1]))
+        eye = torch.autograd.Variable(torch.eye(outputs.shape[1]),
+                                      requires_grad=False).cuda()
+        loss_orth = mseloss(WWT, eye)
+        #loss_orth = mseloss(WWT, torch.eye(outputs.shape[1]))
+        loss = loss + loss_orth
 
         # measure accuracy and record loss
         prec1, prec5 = accuracy(outputs.data, targets.data, topk=(1, 5))
@@ -513,6 +524,11 @@ def test(testloader, model, criterion, epoch, use_cuda, pca=None):
         print('AUROC for softmax thres : %.4f'%auc(fpr, tpr))
     else:
         W = model.state_dict()['module.fc.weight'].cpu().numpy() #10x64
+        print(np.matmul(W, np.transpose(W)))
+        feature = feature / np.linalg.norm(feature, axis=1,keepdims=True)
+        prin_feature = np.matmul(np.matmul(feature, np.transpose(W)), W)
+        in_score = 1. / np.linalg.norm(feature - prin_feature, axis=1)
+        in_score = in_score * np.linalg.norm(feature, axis=1)
         fit_feature = pca.transform(feature)
         #fit_W = pca.transform(W)
         #pca_output = np.matmul(fit_feature, np.transpose(fit_W))
@@ -523,7 +539,7 @@ def test(testloader, model, criterion, epoch, use_cuda, pca=None):
         #pca_feat = np.matmul(fit_feature, pca.components_) + pca.mean_
         #in_score = 1. / np.linalg.norm(feature - pca_feat, axis=1) 
         #in_score = in_score * np.linalg.norm(pca_feat, axis=1) 
-        in_score = np.linalg.norm(fit_feature[:,-5:], axis=1)
+        #in_score = np.linalg.norm(fit_feature[:,-5:], axis=1)
         fpr, tpr, ths = roc_curve(ind_outlier, in_score, pos_label=0)
 
     return (losses.avg, top1_acc, auc(fpr, tpr))

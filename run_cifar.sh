@@ -1,5 +1,5 @@
 #!/bin/bash
-GPUID=2
+GPUID=0
 dataset_path=~/bj/dataset/
 checkpoint_path=~/bj/checkpoint/openset
 
@@ -8,8 +8,8 @@ arch=resnet
 #arch=ae
 depth=32
 
-TRAIN=true
-EVAL=false
+TRAIN=false
+EVAL=true
 
 
 INLIERS=543210
@@ -20,7 +20,7 @@ INLIERS=865430
 INLIERS=984320
 
 
-ExpName=${dataset}_${arch}${depth}_$INLIERS
+ExpName=${dataset}_${arch}${depth}_${INLIERS}_WVN
 
 if $TRAIN; then
 echo RUN TRAINING
