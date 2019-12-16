@@ -249,7 +249,7 @@ def main():
         print(' Test Loss: %.8f, Test Acc: %.2f%%' % \
                     (test_loss, test_acc))
 
-
+        return
         n_components = 5
         # if n_components is not passes, compute full rank
         train_pca = calc_pca(trainloader, model, use_cuda)
