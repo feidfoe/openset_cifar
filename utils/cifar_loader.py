@@ -51,6 +51,7 @@ class CIFARLoader(Dataset):
 
 
         if self.train:
+        #if True:
             n_class = np.max(labels) + 1
             img_list, lbl_list = [], []
             for i in range(n_class):

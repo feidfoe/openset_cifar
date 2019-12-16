@@ -148,14 +148,13 @@ class ResNet(nn.Module):
         #self.layer2.register_backward_hook(self._func_backward_)
         #self.layer3.register_backward_hook(self._func_backward_)
 
-        self.fc.register_backward_hook(self.__WVN__)
+        #self.fc.register_backward_hook(self.__WVN__)
 
 
 
     def __WVN__(self, module, grad_input, grad_output):
         W = module.weight.data
         W_norm = W / torch.norm(W, p=2, dim=1, keepdim=True)
-
         module.weight.data.copy_(W_norm)
 
     def _func_forward_(self, module, input, output):
@@ -193,7 +192,7 @@ class ResNet(nn.Module):
 
         x = self.avgpool(x)
         x = x.view(x.size(0), -1)
-        x = self.bn1d(x)
+        #x = self.bn1d(x)
         feat = x
         x = self.fc(x)
 

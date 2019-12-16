@@ -8,8 +8,8 @@ arch=resnet
 #arch=ae
 depth=32
 
-TRAIN=false
-EVAL=true
+TRAIN=true
+EVAL=false
 
 
 INLIERS=543210
@@ -20,7 +20,7 @@ INLIERS=865430
 INLIERS=984320
 
 
-ExpName=${dataset}_${arch}${depth}_${INLIERS}_WVN
+ExpName=${dataset}_${arch}${depth}_${INLIERS}
 
 if $TRAIN; then
 echo RUN TRAINING

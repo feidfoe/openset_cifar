@@ -176,6 +176,7 @@ def main():
     # Model
     print("==> creating model '{}'".format(args.arch))
     criterion = [nn.CrossEntropyLoss()]
+    #criterion = [nn.BCEWithLogitsLoss()]
     if args.arch.startswith('resnext'):
         model = models.__dict__[args.arch](
                     cardinality=args.cardinality,
@@ -325,21 +326,18 @@ def train(trainloader, model, criterion, optimizer, epoch, use_cuda):
         inputs  = torch.autograd.Variable(inputs)
         targets = torch.autograd.Variable(targets)
 
+
         # compute output
         outputs, feats = model(inputs)
+        #BCE_label = torch.zeros_like(outputs)
+        #BCE_label.scatter_(1, targets.unsqueeze(1), 1)
+        #loss = criterion[0](outputs, BCE_label)
+
+
         loss = criterion[0](outputs, targets)
         if len(criterion)==2:
             loss = loss + criterion[1](feats[-1], inputs)
 
-        # Orthogonal loss
-        W = model.module.fc.weight
-        WWT = torch.matmul(W, W.t())
-        #loss_orth = torch.norm(WWT -  torch.eye(outputs.shape[1]))
-        eye = torch.autograd.Variable(torch.eye(outputs.shape[1]),
-                                      requires_grad=False).cuda()
-        loss_orth = mseloss(WWT, eye)
-        #loss_orth = mseloss(WWT, torch.eye(outputs.shape[1]))
-        loss = loss + loss_orth
 
         # measure accuracy and record loss
         prec1, prec5 = accuracy(outputs.data, targets.data, topk=(1, 5))
@@ -471,6 +469,7 @@ def test(testloader, model, criterion, epoch, use_cuda, pca=None):
     top5 = AverageMeter()
 
     softmax = nn.Softmax(dim=1)
+    sigmoid = nn.Sigmoid()
 
     # switch to evaluate mode
     model.eval()
@@ -491,14 +490,21 @@ def test(testloader, model, criterion, epoch, use_cuda, pca=None):
 
         # compute output
         outputs, feats = model(inputs)
+
+        #BCE_label = torch.zeros_like(outputs)
+        #BCE_label.scatter_(1, targets.unsqueeze(1), 1)
+        #loss = criterion[0](outputs, BCE_label)
+
+
         loss = criterion[0](outputs, targets)
 
         list_targets.append(targets.cpu().data.numpy())
         list_feats.append(feats[0].cpu().data.numpy())
-        list_softmax.append(softmax(outputs).cpu().data.numpy())
+        list_softmax.append(sigmoid(outputs).cpu().data.numpy())
 
         # measure accuracy and record loss
         prec1, prec5 = accuracy(outputs.data, targets.data, topk=(1, 5))
+        #losses.update(0, inputs.size(0))
         losses.update(loss.data[0], inputs.size(0))
         top1.update(prec1[0], inputs.size(0))
         top5.update(prec5[0], inputs.size(0))
@@ -519,7 +525,8 @@ def test(testloader, model, criterion, epoch, use_cuda, pca=None):
     top1_acc = top1.avg * num_test / num_inlier
 
     if pca is None:
-        in_score = np.amax(pred, axis=1)
+        #in_score = np.amax(pred, axis=1)
+        in_score = np.mean(pred, axis=1)
         fpr, tpr, ths = roc_curve(ind_outlier, in_score, pos_label=0)
         print('AUROC for softmax thres : %.4f'%auc(fpr, tpr))
     else:
@@ -528,7 +535,7 @@ def test(testloader, model, criterion, epoch, use_cuda, pca=None):
         feature = feature / np.linalg.norm(feature, axis=1,keepdims=True)
         prin_feature = np.matmul(np.matmul(feature, np.transpose(W)), W)
         in_score = 1. / np.linalg.norm(feature - prin_feature, axis=1)
-        in_score = in_score * np.linalg.norm(feature, axis=1)
+        #in_score = in_score * np.linalg.norm(feature, axis=1)
         fit_feature = pca.transform(feature)
         #fit_W = pca.transform(W)
         #pca_output = np.matmul(fit_feature, np.transpose(fit_W))

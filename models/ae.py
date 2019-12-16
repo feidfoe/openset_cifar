@@ -112,6 +112,8 @@ class AE(nn.Module):
         self.layer2 = self._make_layer(block, 32, n, stride=2)
         self.layer3 = self._make_layer(block, 64, n, stride=2)
         self.avgpool = nn.AvgPool2d(8)
+        self.bn1d   = nn.BatchNorm1d(64 * block.expansion,
+                                     affine=False)
         self.fc = nn.Linear(64 * block.expansion, 
                             num_classes,
                             bias=False)
@@ -179,6 +181,12 @@ class AE(nn.Module):
         self.layer3.register_backward_hook(self._func_backward_)
 
 
+        self.fc.register_backward_hook(self.__WVN__)
+
+    def __WVN__(self, module, grad_input, grad_output):
+        W = module.weight.data
+        W_norm = W / torch.norm(W, p=2, dim=1, keepdim=True)
+        module.weight.data.copy_(W_norm)
     def _func_forward_(self, module, input, output):
         self.list_actmap.append(output.data)
     def _func_backward_(self, module, grad_input, grad_output):
@@ -217,16 +225,19 @@ class AE(nn.Module):
         # Decoding path
         dx = self.relu(self.ae_bn1(self.ae_conv1(f3)))
         dx = self.relu(self.ae_bn2(self.ae_conv2(dx)))
-        dx = self.relu(self.ae_bn_d1(self.ae_deconv1(dx))) + f2
+        #dx = self.relu(self.ae_bn_d1(self.ae_deconv1(dx))) + f2
+        dx = self.relu(self.ae_bn_d1(self.ae_deconv1(dx)))
         dx = self.relu(self.ae_bn3(self.ae_conv3(dx)))
         dx = self.relu(self.ae_bn4(self.ae_conv4(dx)))
-        dx = self.relu(self.ae_bn_d2(self.ae_deconv2(dx))) + f1
+        #dx = self.relu(self.ae_bn_d2(self.ae_deconv2(dx))) + f1
+        dx = self.relu(self.ae_bn_d2(self.ae_deconv2(dx)))
         dx = self.relu(self.ae_bn5(self.ae_conv5(dx)))
         dx = self.ae_conv6(dx)
 
         # Classification layers
         x = self.avgpool(f3)
         x = x.view(x.size(0), -1)
+        #x = self.bn1d(x)
         feat = x
         #feat = f3.view(x.size(0), -1)
         x = self.fc(x)
