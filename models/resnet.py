@@ -138,13 +138,13 @@ class ResNet(nn.Module):
 
 
         # Register hooks
-        #self.init_relu.register_forward_hook(self._func_forward_)
-        #self.layer1.register_forward_hook(self._func_forward_)
+        self.init_relu.register_forward_hook(self._func_forward_)
+        self.layer1.register_forward_hook(self._func_forward_)
         #self.layer2.register_forward_hook(self._func_forward_)
         #self.layer3.register_forward_hook(self._func_forward_)
 
-        #self.init_relu.register_backward_hook(self._func_backward_)
-        #self.layer1.register_backward_hook(self._func_backward_)
+        self.init_relu.register_backward_hook(self._func_backward_)
+        self.layer1.register_backward_hook(self._func_backward_)
         #self.layer2.register_backward_hook(self._func_backward_)
         #self.layer3.register_backward_hook(self._func_backward_)
 
@@ -195,7 +195,7 @@ class ResNet(nn.Module):
         x = self.bn1d(x)
         feat = x
         x = self.fc(x)
-        x = torch.abs(x)
+        #x = torch.abs(x)
 
         return x, [feat]
 

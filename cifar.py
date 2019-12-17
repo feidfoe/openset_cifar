@@ -177,6 +177,7 @@ def main():
     print("==> creating model '{}'".format(args.arch))
     criterion = [nn.CrossEntropyLoss()]
     #criterion = [nn.BCEWithLogitsLoss()]
+    #criterion = [nn.BCELoss()]
     if args.arch.startswith('resnext'):
         model = models.__dict__[args.arch](
                     cardinality=args.cardinality,
@@ -249,11 +250,10 @@ def main():
         print(' Test Loss: %.8f, Test Acc: %.2f%%' % \
                     (test_loss, test_acc))
 
-        return
         n_components = 5
         # if n_components is not passes, compute full rank
-        train_pca = calc_pca(trainloader, model, use_cuda)
-        #train_pca = calc_pca(trainloader, model, use_cuda, n_components)
+        #train_pca = calc_pca(trainloader, model, use_cuda)
+        train_pca = calc_pca(trainloader, model, use_cuda, n_components)
         _, _, auroc = test(testloader, model, criterion, 
                            start_epoch, use_cuda, train_pca)
         print('AUROC: %.4f' % (auroc))
@@ -327,19 +327,33 @@ def train(trainloader, model, criterion, optimizer, epoch, use_cuda):
         targets = torch.autograd.Variable(targets)
 
 
-        # compute output
+        # Compute output
         outputs, feats = model(inputs)
+
+        ## Normalization for BCE
+        #outputs = outputs / torch.max(outputs, dim=1, keepdim=True)[0]
+        #outputs = torch.max(outputs, outputs*0+0.0001)
+        #outputs = torch.min(outputs, outputs*0-0.0001+1)
+
+
         #BCE_label = torch.zeros_like(outputs)
         #BCE_label.scatter_(1, targets.unsqueeze(1), 1)
         #loss = criterion[0](outputs, BCE_label)
 
-
         loss = criterion[0](outputs, targets)
+
         if len(criterion)==2:
             loss = loss + criterion[1](feats[-1], inputs)
 
+        # Weight orthogonality
+        W = model.module.fc.weight
+        WWT = torch.matmul(W, W.t())
+        eye = torch.autograd.Variable(torch.eye(WWT.shape[0]).cuda())
+        loss_orthogonality = mseloss(WWT, eye)
+        loss = loss + loss_orthogonality
 
-        # measure accuracy and record loss
+
+        # Measure accuracy and record loss
         prec1, prec5 = accuracy(outputs.data, targets.data, topk=(1, 5))
         losses.update(loss.data[0], inputs.size(0))
         top1.update(prec1[0], inputs.size(0))
@@ -496,16 +510,16 @@ def test(testloader, model, criterion, epoch, use_cuda, pca=None):
         #loss = criterion[0](outputs, BCE_label)
 
 
-        loss = criterion[0](outputs, targets)
+        #loss = criterion[0](outputs, targets)
 
         list_targets.append(targets.cpu().data.numpy())
         list_feats.append(feats[0].cpu().data.numpy())
-        list_softmax.append(sigmoid(outputs).cpu().data.numpy())
+        list_softmax.append(softmax(outputs).cpu().data.numpy())
 
         # measure accuracy and record loss
         prec1, prec5 = accuracy(outputs.data, targets.data, topk=(1, 5))
-        #losses.update(0, inputs.size(0))
-        losses.update(loss.data[0], inputs.size(0))
+        losses.update(0, inputs.size(0))
+        #losses.update(loss.data[0], inputs.size(0))
         top1.update(prec1[0], inputs.size(0))
         top5.update(prec5[0], inputs.size(0))
 
@@ -525,18 +539,19 @@ def test(testloader, model, criterion, epoch, use_cuda, pca=None):
     top1_acc = top1.avg * num_test / num_inlier
 
     if pca is None:
-        #in_score = np.amax(pred, axis=1)
-        in_score = np.mean(pred, axis=1)
+        in_score = np.amax(pred, axis=1)
+        #in_score = np.mean(pred, axis=1)
         fpr, tpr, ths = roc_curve(ind_outlier, in_score, pos_label=0)
         print('AUROC for softmax thres : %.4f'%auc(fpr, tpr))
     else:
         W = model.state_dict()['module.fc.weight'].cpu().numpy() #10x64
         print(np.matmul(W, np.transpose(W)))
-        feature = feature / np.linalg.norm(feature, axis=1,keepdims=True)
-        prin_feature = np.matmul(np.matmul(feature, np.transpose(W)), W)
-        in_score = 1. / np.linalg.norm(feature - prin_feature, axis=1)
+
+        ortho_feat = feature - np.matmul(pred, W)
+        #in_score = 1. / np.linalg.norm(ortho_feat, axis=1)
         #in_score = in_score * np.linalg.norm(feature, axis=1)
-        fit_feature = pca.transform(feature)
+        in_score = np.linalg.norm(feature, axis=1)
+        #fit_feature = pca.transform(feature)
         #fit_W = pca.transform(W)
         #pca_output = np.matmul(fit_feature, np.transpose(fit_W))
         #pred = np.argmax(pca_output, axis=1)

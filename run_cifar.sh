@@ -8,8 +8,8 @@ arch=resnet
 #arch=ae
 depth=32
 
-TRAIN=true
-EVAL=false
+TRAIN=false
+EVAL=true
 
 
 INLIERS=543210
