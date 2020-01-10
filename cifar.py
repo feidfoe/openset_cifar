@@ -21,8 +21,8 @@ import torchvision.datasets as datasets
 import models
 
 import numpy as np
-from sklearn.metrics import roc_curve, auc
-from sklearn.decomposition import PCA
+#from sklearn.metrics import roc_curve, auc
+#from sklearn.decomposition import PCA
 
 from utils import AverageMeter, accuracy, mkdir_p, cifar_loader
 import utils.log
@@ -231,6 +231,7 @@ def main():
     if args.resume:
         # Load checkpoint.
         print('==> Resuming from checkpoint..')
+        args.resume = args.resume.replace('robustness','GAP')
         print(args.resume)
         assert os.path.isfile(args.resume), \
                 'Error: no checkpoint directory found!'
@@ -249,14 +250,12 @@ def main():
                                           start_epoch, use_cuda)
         print(' Test Loss: %.8f, Test Acc: %.2f%%' % \
                     (test_loss, test_acc))
+        return
+        test_loss, test_acc, auroc = adv_test(testloader, model, criterion, 
+                                              start_epoch, use_cuda)
+        print(' Test Loss: %.8f, Test Acc: %.2f%%' % \
+                    (test_loss, test_acc))
 
-        n_components = 5
-        # if n_components is not passes, compute full rank
-        #train_pca = calc_pca(trainloader, model, use_cuda)
-        train_pca = calc_pca(trainloader, model, use_cuda, n_components)
-        _, _, auroc = test(testloader, model, criterion, 
-                           start_epoch, use_cuda, train_pca)
-        print('AUROC: %.4f' % (auroc))
         return
 
         print(train_pca.singular_values_)
@@ -273,7 +272,6 @@ def main():
     # Train and val
     for epoch in range(start_epoch, args.epochs):
         adjust_learning_rate(optimizer, epoch)
-
 
         train_loss, train_acc = train(trainloader, model, 
                                       criterion, optimizer, 
@@ -321,37 +319,20 @@ def train(trainloader, model, criterion, optimizer, epoch, use_cuda):
         # measure data loading time
         data_time.update(time.time() - end)
 
+        perturb = torch.zeros_like(inputs)
         if use_cuda:
             inputs, targets = inputs.cuda(), targets.cuda(async=True)
-        inputs  = torch.autograd.Variable(inputs)
+            perturb = perturb.cuda()
+        inputs  = torch.autograd.Variable(inputs, requires_grad=True)
         targets = torch.autograd.Variable(targets)
+        perturb = torch.autograd.Variable(perturb, requires_grad=True)
+
 
 
         # Compute output
-        outputs, feats = model(inputs)
-
-        ## Normalization for BCE
-        #outputs = outputs / torch.max(outputs, dim=1, keepdim=True)[0]
-        #outputs = torch.max(outputs, outputs*0+0.0001)
-        #outputs = torch.min(outputs, outputs*0-0.0001+1)
-
-
-        #BCE_label = torch.zeros_like(outputs)
-        #BCE_label.scatter_(1, targets.unsqueeze(1), 1)
-        #loss = criterion[0](outputs, BCE_label)
-
+        model.train()
+        outputs, _ = model(inputs)
         loss = criterion[0](outputs, targets)
-
-        if len(criterion)==2:
-            loss = loss + criterion[1](feats[-1], inputs)
-
-        # Weight orthogonality
-        W = model.module.fc.weight
-        WWT = torch.matmul(W, W.t())
-        eye = torch.autograd.Variable(torch.eye(WWT.shape[0]).cuda())
-        loss_orthogonality = mseloss(WWT, eye)
-        loss = loss + loss_orthogonality
-
 
         # Measure accuracy and record loss
         prec1, prec5 = accuracy(outputs.data, targets.data, topk=(1, 5))
@@ -363,6 +344,58 @@ def train(trainloader, model, criterion, optimizer, epoch, use_cuda):
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+
+        # Adversarial robust training
+        if True:
+            model.eval()
+            batch_size = inputs.shape[0]
+            for i in range(20):  # Attack loop
+                perturb.grad = None
+                inputs.grad = None
+                adv_out, _ = model(inputs + perturb)
+                loss = -criterion[0](adv_out, targets)
+                loss.backward()
+                p_grad = 0.01*torch.sign(perturb.grad.data + inputs.grad.data)
+                #p_grad = perturb.grad.data + inputs.grad.data
+                perturb.data = perturb.data - p_grad
+                ## Normalization into 0.03125 (8/256)
+                #p_norm = torch.norm(perturb.data.view(batch_size,-1), p=2, dim=1)
+                #p_norm = p_norm.view(batch_size,1,1,1)
+                #perturb.data = perturb.data / p_norm * 0.3125
+
+
+            # for debug
+            if batch_idx == 10:
+                idx=10
+                init_img0 = inputs[idx].data.cpu().numpy()
+                pert_img0 = (inputs[idx]+perturb[idx]).data.cpu().numpy()
+                idx=20
+                init_img1 = inputs[idx].data.cpu().numpy()
+                pert_img1 = (inputs[idx]+perturb[idx]).data.cpu().numpy()
+
+                img_init0 = vis._save_image(init_img0)
+                img_pert0 = vis._save_image(pert_img0)
+                img_init1 = vis._save_image(init_img1)
+                img_pert1 = vis._save_image(pert_img1)
+                prec1, prec5 = accuracy(adv_out.data, targets.data, topk=(1, 5))
+                print(prec1)
+
+
+
+                vis._save_2x2([img_init0, img_pert0, img_init1, img_pert1],
+                              'adv_robust_train.jpg')
+
+
+            # Compute output for adversary
+            model.train()
+            outputs, _ = model(inputs + perturb)
+            loss = criterion[0](outputs, targets)
+
+            # compute gradient and do SGD step
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
 
         # measure elapsed time
         batch_time.update(time.time() - end)
@@ -502,6 +535,32 @@ def test(testloader, model, criterion, epoch, use_cuda, pca=None):
         inputs  = torch.autograd.Variable(inputs, volatile=True)
         targets = torch.autograd.Variable(targets)
 
+        # Test for FFT
+        f = torch.rfft(inputs, 2, onesided=False)
+        recover = torch.irfft(f, 2, onesided=False)
+
+
+        idx=10
+        init_img0 = inputs[idx].data.cpu().numpy()
+        pert_img0 = recover[idx].data.cpu().numpy()
+        idx=20
+        init_img1 = inputs[idx].data.cpu().numpy()
+        pert_img1 = recover[idx].data.cpu().numpy()
+
+        img_init0 = vis._save_image(init_img0)
+        img_pert0 = vis._save_image(pert_img0)
+        img_init1 = vis._save_image(init_img1)
+        img_pert1 = vis._save_image(pert_img1)
+        vis._save_2x2([img_init0, img_pert0, img_init1, img_pert1],
+                              'test_rfft.jpg')
+        return
+
+
+
+
+
+
+
         # compute output
         outputs, feats = model(inputs)
 
@@ -563,6 +622,90 @@ def test(testloader, model, criterion, epoch, use_cuda, pca=None):
         #in_score = in_score * np.linalg.norm(pca_feat, axis=1) 
         #in_score = np.linalg.norm(fit_feature[:,-5:], axis=1)
         fpr, tpr, ths = roc_curve(ind_outlier, in_score, pos_label=0)
+
+    return (losses.avg, top1_acc, auc(fpr, tpr))
+
+
+
+def adv_test(testloader, model, criterion, epoch, use_cuda):
+    # Evaluates closed set accuracy,
+    #           opened set accuracy,
+    #           openset AUROC
+    global best_acc
+
+    batch_time = AverageMeter()
+    data_time = AverageMeter()
+    losses = AverageMeter()
+    top1 = AverageMeter()
+    top5 = AverageMeter()
+
+    softmax = nn.Softmax(dim=1)
+    sigmoid = nn.Sigmoid()
+
+    # switch to evaluate mode
+    model.eval()
+
+    list_targets = []
+    list_feats   = []
+    list_softmax = []
+
+    end = time.time()
+    for batch_idx, (inputs, targets) in enumerate(testloader):
+        # measure data loading time
+        data_time.update(time.time() - end)
+
+        perturb = torch.zeros_like(inputs)
+        if use_cuda:
+            inputs, targets = inputs.cuda(), targets.cuda()
+            perturb = perturb.cuda()
+        #inputs  = torch.autograd.Variable(inputs, volatile=True)
+        inputs  = torch.autograd.Variable(inputs, requires_grad=True)
+        targets = torch.autograd.Variable(targets)
+        perturb = torch.autograd.Variable(perturb, requires_grad=True)
+
+        # Adversarial Attack
+        batch_size = inputs.shape[0]
+        for i in range(20):  # Attack loop
+            perturb.grad = None
+            inputs.grad = None
+            adv_out, _ = model(inputs + perturb)
+            loss = -criterion[0](adv_out, targets)
+            loss.backward()
+            p_grad = 0.01*torch.sign(perturb.grad.data + inputs.grad.data)
+            perturb.data = perturb.data - p_grad
+
+        # compute output
+        outputs, feats = model(inputs + perturb)
+
+        list_targets.append(targets.cpu().data.numpy())
+        list_feats.append(feats[0].cpu().data.numpy())
+        list_softmax.append(softmax(outputs).cpu().data.numpy())
+
+        # measure accuracy and record loss
+        prec1, prec5 = accuracy(outputs.data, targets.data, topk=(1, 5))
+        losses.update(0, inputs.size(0))
+        #losses.update(loss.data[0], inputs.size(0))
+        top1.update(prec1[0], inputs.size(0))
+        top5.update(prec5[0], inputs.size(0))
+
+        # measure elapsed time
+        batch_time.update(time.time() - end)
+        end = time.time()
+        
+
+    feature = np.vstack(list_feats)
+    pred    = np.vstack(list_softmax)
+    label   = np.concatenate(list_targets)
+
+    num_test = label.shape[0]
+    ind_outlier = label==-100
+    num_outlier = np.sum(ind_outlier)
+    num_inlier  = num_test - num_outlier
+    top1_acc = top1.avg * num_test / num_inlier
+
+    in_score = np.amax(pred, axis=1)
+    fpr, tpr, ths = roc_curve(ind_outlier, in_score, pos_label=0)
+    print('AUROC for softmax thres : %.4f'%auc(fpr, tpr))
 
     return (losses.avg, top1_acc, auc(fpr, tpr))
 

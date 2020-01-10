@@ -5,11 +5,10 @@ checkpoint_path=~/bj/checkpoint/openset
 
 dataset=cifar10
 arch=resnet
-#arch=ae
 depth=32
 
 TRAIN=false
-EVAL=true
+#TRAIN=true
 
 
 INLIERS=543210
@@ -20,7 +19,7 @@ INLIERS=865430
 INLIERS=984320
 
 
-ExpName=${dataset}_${arch}${depth}_${INLIERS}
+ExpName=${dataset}_${arch}${depth}_${INLIERS}_robustness
 
 if $TRAIN; then
 echo RUN TRAINING
@@ -44,33 +43,23 @@ NV_GPU=${GPUID} nvidia-docker run -v `pwd`:`pwd` \
 
 
 else
-    echo DO NOT RUN TRAINING
 
-
-fi
-
-
-
-
-if $EVAL; then
 echo RUN EVALUATION
 CKPT=checkpoints/${ExpName}/model_best.pth.tar
-NV_GPU=${GPUID} nvidia-docker run -v `pwd`:`pwd` \
+NV_GPU=${GPUID} docker run -v `pwd`:`pwd` \
                   -v ${dataset_path}:`pwd`/data/ \
                   -v ${checkpoint_path}:`pwd`/checkpoints/ \
                   -w `pwd` \
                   --rm -it \
                   --ipc=host \
-                  feidfoe/pytorch:v.3 \
-                  python cifar.py -a $arch \
+                  feidfoe/pytorch:v1.1 \
+                  python3 cifar.py -a $arch \
                                   --depth $depth \
                                   --dataset $dataset \
                                   --inlier $INLIERS \
                                   --checkpoint checkpoints/${ExpName} \
                                   --resume ${CKPT} \
                                   --evaluate
-else
-    echo DO NOT RUN EVALUATION
 fi
 
 

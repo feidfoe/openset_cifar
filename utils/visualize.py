@@ -1,6 +1,6 @@
 import numpy as np
 from PIL import Image
-from scipy.misc import imresize
+#from scipy.misc import imresize
 
 def _save_image(img):
     mean = np.array([0.4914, 0.4822, 0.4465]).reshape((3,1,1))
@@ -20,7 +20,7 @@ def _save_gradCAM(fs):
     size = fs[0].shape
     img = fs[0]
     for f in fs[1:]:
-        img = img + imresize(f, size)
+        img = img + np.array(Image.fromarray(f).resize(size))
 
     #TODO: Consider normalizing CAM with maximum value
     img = img / np.max(img)
